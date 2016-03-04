@@ -125,7 +125,11 @@ def execCommand(args, following_args):
     for result in itertools.islice(registry_access.search(query=args.query, keywords=args.kw, registry=args.registry), args.limit):
         success= True
         if args.type == 'both' or args.type == result['type']:
-            print(formatResult(result, args.plain, short=args.short))
+            fmt = formatResult(result, args.plain, short=args.short)
+            try:
+                print(fmt)
+            except UnicodeEncodeError:
+                print(fmt.encode('ascii', 'ignore'))
     for repo in filter(lambda s: 'type' in s and s['type'] == 'registry', settings.get('sources') or []) :
         count = 0
         print('')
