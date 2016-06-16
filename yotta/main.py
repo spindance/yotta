@@ -109,7 +109,10 @@ def main():
             help = description
         def onParserAdded(parser):
             import importlib
-            module = importlib.import_module('.' + module_name, 'yotta')
+            try:
+                module = importlib.import_module('.' + module_name, 'yotta')
+            except ImportError:
+                module = importlib.import_module('.' + module_name, 'yotta_plugins')
             module.addOptions(parser)
             parser.set_defaults(command=module.execCommand)
         subparser.add_parser_async(
@@ -195,6 +198,30 @@ def main():
     addParser('clean', 'clean', 'Remove files created by yotta and the build.')
     addParser('config', 'config', 'Display the target configuration info.')
     addParser('shrinkwrap', 'shrinkwrap', 'Create a yotta-shrinkwrap.json file to freeze dependency versions.')
+
+
+    # check for plugins in ./yotta_plugins
+    # if found, import them and add parsers accordingly
+    searchdir = os.getcwd() + '/yotta_plugins'
+    if os.path.exists(searchdir):
+        sys.path.append(os.getcwd())
+        for directory, subdirectories, files in os.walk(searchdir):
+            for file in files:
+                if file.endswith(".py") and file != '__init__.py':
+                    import importlib
+                    try:
+                        mod = importlib.import_module('yotta_plugins.' + os.path.splitext(os.path.basename(file))[0])
+                        try:
+                            addParser(mod.name, os.path.splitext(os.path.basename(file))[0], mod.description, mod.help)
+                        except AttributeError:
+                            continue;
+                    except ImportError:
+                        if not os.path.exists(searchdir + '/__init__.py'):
+                            logging.error('\"./yotta_plugins/\" does not contain \"__init__.py\"')
+                            sys.exit(-1)
+                        else:
+                            logging.error("Unknown plugin import error.")
+                            sys.exit(-1)                  
 
     # short synonyms, subparser.choices is a dictionary, so use update() to
     # merge in the keys from another dictionary
