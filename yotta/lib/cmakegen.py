@@ -48,6 +48,7 @@ class SourceFile(object):
 
 class CMakeGen(object):
     def __init__(self, directory, target):
+        print "CMakeGen init entry"
         super(CMakeGen, self).__init__()
         self.buildroot = directory
         logger.info("generate for target: %s" % target)
@@ -57,16 +58,20 @@ class CMakeGen(object):
         self.config_json_file = None
         self.build_info_include_file = None
         self.build_uuid = None
+        print "CMakeGen init exit"
 
     def _writeFile(self, path, contents):
+        print "CMakeGen writeFile entry"
         dirname = os.path.dirname(path)
         fsutils.mkDirP(dirname)
         self.writeIfDifferent(path, contents)
+        print "CMakeGen writeFile exit"
 
     def configure(self, component, all_dependencies):
         ''' Ensure all config-time files have been generated. Return a
             dictionary of generated items.
         '''
+        print "CMakeGen configure entry"
         r = {}
 
         builddir = self.buildroot
@@ -89,6 +94,7 @@ class CMakeGen(object):
             self.set_toplevel_definitions += config_definitions
 
         self.configured = True
+        print "CMakeGen configure exit"
         return {
             'merged_config_include': self.config_include_file,
                'merged_config_json': self.config_json_file,
@@ -107,6 +113,7 @@ class CMakeGen(object):
             for error in gen.generateRecursive(...):
                 print(error)
         '''
+        print "CMakeGen generateRecursive entry"
         assert(self.configured)
 
         if builddir is None:
@@ -164,13 +171,17 @@ class CMakeGen(object):
                 c, all_components, os.path.join(modbuilddir, name), modbuilddir, processed_components, application=application
             ):
                 yield error
+        print "CMakeGen generateRecursive exit"
 
     def checkStandardSourceDir(self, dirname, component):
+        print "CMakeGen checkStandardSourceDir entry"
         # validate, , validate various things, internal
         from yotta.lib import validate
         err = validate.sourceDirValidationError(dirname, component.getName())
         if err:
             logger.warning(err)
+
+        print "CMakeGen checkStandardSourceDir exit"
 
     def _validateListedSubdirsExist(self, component):
         ''' Return true if all the subdirectories which this component lists in
@@ -179,6 +190,7 @@ class CMakeGen(object):
 
             If they don't, warning messages are printed.
         '''
+        print "CMakeGen validateListedSubdirsExist entry"
         lib_subdirs = component.getLibs(explicit_only=True)
         bin_subdirs = component.getBinaries()
 
@@ -196,7 +208,7 @@ class CMakeGen(object):
                     "bin directory \"%s\" doesn't exist but is listed in the module.json file of %s", d, component
                 )
                 ok = False
-
+        print "CMakeGen validateListedSubdirsExist exit"
         return ok
 
     def _listSubDirectories(self, component, toplevel):
@@ -209,6 +221,7 @@ class CMakeGen(object):
               resource: [list of directories that contain resources]
             }
         '''
+        print "CMakeGen listSubDirectories entry into " + component.path
         manual_subdirs = []
         auto_subdirs = []
         header_subdirs = []
@@ -216,61 +229,79 @@ class CMakeGen(object):
         bin_subdirs = component.getBinaries()
         test_subdirs = []
         resource_subdirs = []
-        for f in sorted(os.listdir(component.path)):
-            if f in Ignore_Subdirs or f.startswith('.') or f.startswith('_'):
-                continue
-            check_cmakefile_path = os.path.join(f, 'CMakeLists.txt')
-            if os.path.isfile(os.path.join(component.path, check_cmakefile_path)) and not \
-                    component.ignores(check_cmakefile_path):
-                self.checkStandardSourceDir(f, component)
-                # if the subdirectory has a CMakeLists.txt in it (and it isn't
-                # ignored), then delegate to that:
-                manual_subdirs.append(f)
-                # tests only supported in the `test` directory for now
-                if f in ('test',):
-                    test_subdirs.append(f)
-            else:
-                # otherwise, if the directory has source files, and is listed
-                # as a source/test directory, generate a CMakeLists in the
-                # corresponding temporary directory, and add that.
-                sources = self.containsSourceFiles(os.path.join(component.path, f), component)
-                if sources:
+        print "*******************************************************************"
+        print component.path
+        print os.getcwd()
+        print os.path.join(component.path, 'source-list.txt')
+        if (os.path.isfile(os.path.join(component.path, os.path.join('source', 'source-list.txt')))):
+            print "found source list file"
+            sources = self.readSourceListFile(component)
+            auto_subdirs.append(('source',sources))
+            print "SOURCES FROM FILE: ", sources
+        else:
+            for f in sorted(os.listdir(component.path)):
+                if f in Ignore_Subdirs or f.startswith('.') or f.startswith('_'):
+                    continue
+                check_cmakefile_path = os.path.join(f, 'CMakeLists.txt')
+                print check_cmakefile_path
+                print os.path.join(component.path, check_cmakefile_path)
+                if os.path.isfile(os.path.join(component.path, check_cmakefile_path)) and not \
+                        component.ignores(check_cmakefile_path):
+                    self.checkStandardSourceDir(f, component)
+                    # if the subdirectory has a CMakeLists.txt in it (and it isn't
+                    # ignored), then delegate to that:
+                    manual_subdirs.append(f)
+                    # tests only supported in the `test` directory for now
                     if f in ('test',):
-                        auto_subdirs.append((f, sources))
                         test_subdirs.append(f)
-                    elif os.path.normpath(f) in [fsutils.fullySplitPath(x)[0] for x in lib_subdirs] or \
-                         os.path.normpath(f) in [fsutils.fullySplitPath(x)[0] for x in bin_subdirs]:
-                        for full_subpath in list(lib_subdirs.keys()) + list(bin_subdirs.keys()):
-                            if fsutils.fullySplitPath(full_subpath)[0] == os.path.normpath(f):
-                                # this might be a sub-sub directory, in which
-                                # case we need to re-calculate the sources just
-                                # for the part we care about:
-                                sources = self.containsSourceFiles(os.path.join(component.path, full_subpath), component)
-                                auto_subdirs.append((full_subpath, sources))
-                    elif f == component.getName():
-                        header_subdirs.append((f, sources))
-                elif toplevel and \
-                     ((f in ('test',)) or \
-                      (os.path.normpath(f) in lib_subdirs) or \
-                      (os.path.normpath(f) in bin_subdirs) and not \
-                      component.ignores(f)):
-                    # (if there aren't any source files then do nothing)
-                    # !!! FIXME: ensure this warning is covered in tests
-                    logger.warning("subdirectory \"%s\" of %s was ignored because it doesn't appear to contain any source files", f, component)
+                else:
+                    # otherwise, if the directory has source files, and is listed
+                    # as a source/test directory, generate a CMakeLists in the
+                    # corresponding temporary directory, and add that.
+                    sources = self.containsSourceFiles(os.path.join(component.path, f), component)
+                    if sources:
+                        if f in ('test',):
+                            auto_subdirs.append((f, sources))
+                            test_subdirs.append(f)
+                        elif os.path.normpath(f) in [fsutils.fullySplitPath(x)[0] for x in lib_subdirs] or \
+                             os.path.normpath(f) in [fsutils.fullySplitPath(x)[0] for x in bin_subdirs]:
+                            for full_subpath in list(lib_subdirs.keys()) + list(bin_subdirs.keys()):
+                                print fsutils.fullySplitPath(full_subpath)[0] + "*****************************"
+                                print os.path.normpath(f) + "&&&&&&&&&&&&&&&&&&&&&&&&&&&&&"
+                                if fsutils.fullySplitPath(full_subpath)[0] == os.path.normpath(f):
+                                    # this might be a sub-sub directory, in which
+                                    # case we need to re-calculate the sources just
+                                    # for the part we care about:
+                                    sources = self.containsSourceFiles(os.path.join(component.path, full_subpath), component)
+                                    auto_subdirs.append((full_subpath, sources))
+                                    print 'FULL_SUBPATH: ', full_subpath, ' ', type(full_subpath)
+                                    print 'SOURCE: ', sources
+                        elif f == component.getName():
+                            header_subdirs.append((f, sources))
+                    elif toplevel and \
+                         ((f in ('test',)) or \
+                          (os.path.normpath(f) in lib_subdirs) or \
+                          (os.path.normpath(f) in bin_subdirs) and not \
+                          component.ignores(f)):
+                        # (if there aren't any source files then do nothing)
+                        # !!! FIXME: ensure this warning is covered in tests
+                        logger.warning("subdirectory \"%s\" of %s was ignored because it doesn't appear to contain any source files", f, component)
+                # 'resource' directory also has special meaning, but there's no
+                # pattern for the files which might be in here:
+                if f in ('resource',):
+                    resource_subdirs.append(os.path.join(component.path, f))
 
-            # 'resource' directory also has special meaning, but there's no
-            # pattern for the files which might be in here:
-            if f in ('resource',):
-                resource_subdirs.append(os.path.join(component.path, f))
-
-            # issue a warning if a differently cased or common misspelling of a
-            # standard directory name was encountered:
-            check_directory_name_cases = list(lib_subdirs.keys()) + list(bin_subdirs.keys()) + ['test', 'resource']
-            if f.lower() in check_directory_name_cases + ['src'] and not \
-               f in check_directory_name_cases and not \
-               component.ignores(f):
-                self.checkStandardSourceDir(f, component)
-
+                # issue a warning if a differently cased or common misspelling of a
+                # standard directory name was encountered:
+                check_directory_name_cases = list(lib_subdirs.keys()) + list(bin_subdirs.keys()) + ['test', 'resource']
+                if f.lower() in check_directory_name_cases + ['src'] and not \
+                   f in check_directory_name_cases and not \
+                   component.ignores(f):
+                    self.checkStandardSourceDir(f, component)
+        print auto_subdirs
+        print header_subdirs
+        print manual_subdirs
+        print "CMakeGen listSubDirectories exit"
         return {
             "manual": manual_subdirs,
               "auto": auto_subdirs,
@@ -282,6 +313,7 @@ class CMakeGen(object):
         }
 
     def _definitionsForConfig(self, config, key_path=None):
+        print "CMakeGen definitionsForConfig entry"
         if key_path is None:
             key_path = list()
         key_prefix = '_'.join([sanitizePreprocessorSymbol(x) for x in key_path])
@@ -301,11 +333,13 @@ class CMakeGen(object):
                     # of a C bool type
                     v = 1 if v else 0
                 r.append(('%s_%s' % (key_prefix, sanitizePreprocessorSymbol(k)), v))
+        print "CMakeGen definitionsForConfig exit"
         return r
 
     def _getConfigData(self, all_dependencies, component, builddir, build_info_header_path):
         ''' returns (path_to_config_header, cmake_set_definitions) '''
         # ordered_json, , read/write ordered json, internal
+        print "CMakeGen getConfigData entry"
         from yotta.lib import ordered_json
         add_defs_header = ''
         set_definitions = ''
@@ -365,10 +399,12 @@ class CMakeGen(object):
             config_json_file,
             ordered_json.dumps(merged_config)
         )
+        print "CMakeGen getConfigData exit"
         return (config_include_file, set_definitions, config_json_file)
 
     def getBuildInfo(self, sourcedir, builddir):
         ''' Write the build info header file, and return (path_to_written_header, set_cmake_definitions) '''
+        print "CMakeGen getBuildInfo entry"
         cmake_defs = ''
         preproc_defs = '// yotta build info, #include YOTTA_BUILD_INFO_HEADER to access\n'
         # standard library modules
@@ -427,6 +463,7 @@ class CMakeGen(object):
             preproc_defs+
             '#endif // ndef __YOTTA_BUILD_INFO_H__\n'
         )
+        print "CMakeGen getBuildInfo exit"
         return (buildinfo_include_file, cmake_defs)
 
     def generate(
@@ -436,7 +473,7 @@ class CMakeGen(object):
             built for this component, but will not already have been built for
             another component.
         '''
-
+        print "CMakeGen generate entry"
         include_root_dirs = ''
         if application is not None and component is not application:
             include_root_dirs += 'include_directories("%s")\n' % replaceBackslashes(application.path)
@@ -604,8 +641,11 @@ class CMakeGen(object):
                       "cmake_includes": self.target.getAdditionalIncludes()
         })
         self._writeFile(os.path.join(builddir, 'CMakeLists.txt'), file_contents)
+        print subdirs
+        print "CMakeGen generate exit"
 
     def createDummyLib(self, component, builddir, link_dependencies):
+        print "CMakeGen createDummyLib entry"
         safe_name        = sanitizeSymbol(component.getName())
         dummy_dirname    = 'yotta_dummy_lib_%s' % safe_name
         dummy_cfile_name = 'dummy.c'
@@ -631,9 +671,11 @@ class CMakeGen(object):
         self._writeFile(os.path.join(builddir, dummy_dirname, "CMakeLists.txt"), dummy_cmakelists)
         dummy_cfile = "void __yotta_dummy_lib_symbol_%s(){}\n" % safe_name
         self._writeFile(os.path.join(builddir, dummy_dirname, dummy_cfile_name), dummy_cfile)
+        print "CMakeGen createDummyLib exit"
         return (os.path.join(builddir, dummy_dirname), dummy_dirname)
 
     def writeIfDifferent(self, fname, contents):
+        print "CMakeGen writeIfDifferent entry"
         try:
             with open(fname, "r+") as f:
                 current_contents = f.read()
@@ -644,8 +686,10 @@ class CMakeGen(object):
         except IOError:
             with open(fname, "w") as f:
                 f.write(contents)
+        print "CMakeGen writeIfDifferent exit"
 
     def generateTestDirList(self, builddir, dirname, source_files, component, immediate_dependencies, toplevel=False, module_is_empty=False):
+        print "CMakeGen generateTestDirList entry"
         logger.debug('generate CMakeLists.txt for directory: %s' % os.path.join(component.path, dirname))
 
         link_dependencies = [x for x in immediate_dependencies]
@@ -700,8 +744,10 @@ class CMakeGen(object):
         })
 
         self._writeFile(fname, file_contents)
+        print "CMakeGen generateTestDirList exit"
 
     def generateSubDirList(self, builddir, dirname, source_files, component, all_subdirs, immediate_dependencies, object_name, resource_subdirs, is_executable):
+        print "CMakeGen generateSubDirList entry"
         logger.debug('generate CMakeLists.txt for directory: %s' % os.path.join(component.path, dirname))
 
         link_dependencies = [x[0] for x in immediate_dependencies.items() if not x[1].isTestDependency()]
@@ -736,6 +782,9 @@ class CMakeGen(object):
 
         subdir_template = jinja_environment.get_template('subdir_CMakeLists.txt')
 
+        for f in source_files:
+            print type(f)
+
         file_contents = subdir_template.render({ #pylint: disable=no-member
                 'source_directory': os.path.join(component.path, dirname),
              "config_include_file": self.config_include_file,
@@ -750,9 +799,11 @@ class CMakeGen(object):
         })
 
         self._writeFile(fname, file_contents)
+        print "CMakeGen generateSubDirList exit"
 
 
     def containsSourceFiles(self, directory, component):
+        print "CMakeGen containsSourceFiles entry: " + directory
         c_exts          = set(('.c',))
         cpp_exts        = set(('.cpp','.cc','.cxx'))
         asm_exts        = set(('.s',))
@@ -778,4 +829,40 @@ class CMakeGen(object):
                     sources.append(SourceFile(fullpath, relpath, 'objc'))
                 elif ext in header_exts:
                     sources.append(SourceFile(fullpath, relpath, 'header'))
+                print "Found a file: " + fullpath
+                if f == "aThird.c":
+                    print "yay"
+        print "CMakeGen containsSourceFiles exit"
+        return sources
+
+    def readSourceListFile(self, component):
+        c_exts          = set(('.c',))
+        cpp_exts        = set(('.cpp','.cc','.cxx'))
+        asm_exts        = set(('.s',))
+        objc_exts       = set(('.m', '.mm'))
+        header_exts     = set(('.h',))
+
+        print "CWD: ", os.getcwd()
+        file = open('source/source-list.txt','r')
+        sources = []
+        for line in file:
+            f = line.rstrip()
+            f = f.rstrip()
+            name, ext = os.path.splitext(f)
+            ext = ext.lower()
+            relpath  = os.path.relpath(f, component.path)
+            print "FILE FROM FILE: ", f
+            if os.path.isfile(f):
+                print "found it"
+                if ext in c_exts:
+                    sources.append(SourceFile(f, relpath, 'c'))
+                    print "got ", f
+                elif ext in cpp_exts:
+                    sources.append(SourceFile(f, relpath, 'cpp'))
+                elif ext in asm_exts:
+                    sources.append(SourceFile(f, relpath, 's'))
+                elif ext in objc_exts:
+                    sources.append(SourceFile(f, relpath, 'objc'))
+                elif ext in header_exts:
+                    sources.append(SourceFile(f, relpath, 'header'))
         return sources
